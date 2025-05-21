@@ -1,1 +1,1 @@
-# EM_PT
+# The Unreasonable Effectiveness of Entropy Minimization in LLM Reasoning
