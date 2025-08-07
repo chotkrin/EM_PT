@@ -1,0 +1,14 @@
+.DS_Store
+**/.DS_Store
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# result and log folders 
+results/
+eval/Coding/livecodebench/LiveCodeBench-main/results/
+
+# venv
+virtual_envs/
