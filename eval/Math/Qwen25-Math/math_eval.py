@@ -9,23 +9,18 @@ from parser import *
 
 import numpy as np
 import torch
-
 from data_loader import load_data
 from evaluate import evaluate
+from general_utils import construct_prompt, load_jsonl, save_jsonl, set_seed
 from model_utils import generate_completions, load_hf_lm_and_tokenizer
 from python_executor import PythonExecutor
 from tqdm import tqdm
 from trajectory import *
 from transformers import AutoTokenizer
-
-from general_utils import construct_prompt, load_jsonl, save_jsonl, set_seed
 from vllm import LLM, SamplingParams
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from utils.em_inf_utils import (
-    min_entropy_inference,
-    AdaptiveTemperatureProcessor
-)
+from utils.em_inf_utils import AdaptiveTemperatureProcessor, min_entropy_inference
 from utils.self_consistency_generator import (
     generate_sample_batch_with_n_trajs,
     self_consistency_output_selection,
@@ -36,7 +31,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_names", default="gsm8k,math", type=str)
     parser.add_argument("--data_dir", default="../../../data", type=str)
-    parser.add_argument("--model_name_or_path", default="Qwen/Qwen2.5-7B-Instruct", type=str)
+    parser.add_argument(
+        "--model_name_or_path", default="Qwen/Qwen2.5-7B-Instruct", type=str
+    )
     parser.add_argument("--output_dir", default="./output", type=str)
     parser.add_argument("--prompt_type", default="tool-integrated", type=str)
     parser.add_argument("--split", default="test", type=str)
@@ -46,7 +43,20 @@ def parse_args():
     parser.add_argument("--end", default=-1, type=int)
     parser.add_argument("--temperature", default=0, type=float)
     parser.add_argument("--n_sampling", default=1, type=int)
-    parser.add_argument("--inference_mode", "-i", type=str, default="normal", choices=["normal", "self_consistency", "self_refinement", "adaptive_temp", "em_inf", "ice_self_consistency"])
+    parser.add_argument(
+        "--inference_mode",
+        "-i",
+        type=str,
+        default="normal",
+        choices=[
+            "normal",
+            "self_consistency",
+            "self_refinement",
+            "adaptive_temp",
+            "em_inf",
+            "ice_self_consistency",
+        ],
+    )
     parser.add_argument("--n_trajs", type=int, default=4)
     parser.add_argument("--top_p", default=1, type=float)
     parser.add_argument("--max_tokens_per_call", default=4096, type=int)
@@ -133,24 +143,19 @@ def setup(args):
     # load model
     available_gpus = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
     if args.use_vllm:
-        if (
-            args.inference_mode == "normal"
-            or args.inference_mode == "self_consistency"
-            or args.inference_mode == "self_refinement"
-        ):
-            llm = LLM(
-                model=args.model_name_or_path,
-                tensor_parallel_size=4,
-                pipeline_parallel_size=args.pipeline_parallel_size,
-                trust_remote_code=True,
-                gpu_memory_utilization=0.7,
-            )
+        llm = LLM(
+            model=args.model_name_or_path,
+            tensor_parallel_size=4,
+            pipeline_parallel_size=args.pipeline_parallel_size,
+            trust_remote_code=True,
+            gpu_memory_utilization=0.7,
+        )
 
-            tokenizer = None
-            if args.apply_chat_template:
-                tokenizer = AutoTokenizer.from_pretrained(
-                    args.model_name_or_path, trust_remote_code=True
-                )
+        tokenizer = None
+        if args.apply_chat_template:
+            tokenizer = AutoTokenizer.from_pretrained(
+                args.model_name_or_path, trust_remote_code=True
+            )
     else:
         if args.inference_mode == "em_inf":
             llm = None
@@ -361,17 +366,26 @@ def main(llm, tokenizer, data_name, args, cur_iter=0):
                     outputs, key=lambda x: int(x.request_id)
                 )  # sort outputs by request_id
                 outputs = [output.outputs[0].text for output in outputs]
-                
+
             elif args.inference_mode == "adaptive_temp":
                 hyperparameters = json.loads(args.hyperparameters)
-                print(f"Running with adaptive temperature inference mode using hyperparameters {hyperparameters}")
-                
-                logits_processor = AdaptiveTemperatureProcessor(tmax=hyperparameters["tmax"], tmin=hyperparameters["tmin"],max_iter=hyperparameters["max_iter"], tol=hyperparameters["tol"], target_ratio=hyperparameters["target_ratio"], target_threshold=hyperparameters["threshold"])
+                print(
+                    f"Running with adaptive temperature inference mode using hyperparameters {hyperparameters}"
+                )
+
+                logits_processor = AdaptiveTemperatureProcessor(
+                    tmax=hyperparameters["tmax"],
+                    tmin=hyperparameters["tmin"],
+                    max_iter=hyperparameters["max_iter"],
+                    tol=hyperparameters["tol"],
+                    target_ratio=hyperparameters["target_ratio"],
+                    target_threshold=hyperparameters["threshold"],
+                )
                 sampling_params = SamplingParams(
                     max_tokens=4096,
                     temperature=1.0,
                     seed=42,
-                    logits_processors=[logits_processor],  
+                    logits_processors=[logits_processor],
                     stop=stop_words,
                     stop_token_ids=(
                         [151645, 151643]
@@ -382,8 +396,7 @@ def main(llm, tokenizer, data_name, args, cur_iter=0):
 
                 vllm_outputs = llm.generate(prompts, sampling_params, use_tqdm=True)
                 outputs = [output.outputs[0].text for output in vllm_outputs]
-                
-                
+
             elif args.inference_mode == "self_consistency":
                 upsampled_prompts = prompts * args.n_trajs
                 upsampled_outputs = llm.generate(
@@ -408,9 +421,7 @@ def main(llm, tokenizer, data_name, args, cur_iter=0):
                         completions[question] = []
                     completions[question].append(output.outputs[0].text)
 
-                outputs = self_consistency_output_selection(
-                    completions, prompts
-                )
+                outputs = self_consistency_output_selection(completions, prompts)
 
             elif args.inference_mode == "self_refinement":
                 print("*" * 30)
@@ -515,7 +526,7 @@ def main(llm, tokenizer, data_name, args, cur_iter=0):
                 except RuntimeError:
                     print("Spawn method already set. Continuing...")
                 num_processes = args.num_processes
-                
+
                 torch.manual_seed(42)
                 np.random.seed(42)
                 random.seed(42)
@@ -529,21 +540,27 @@ def main(llm, tokenizer, data_name, args, cur_iter=0):
                 ]
 
                 # --- 2. Create and Start Processes ---
-                hyperparameters = json.loads(args.hyperparameters)     
-                print(f"Running with EM-INF inference mode using hyperparameters {hyperparameters}")
+                hyperparameters = json.loads(args.hyperparameters)
+                print(
+                    f"Running with EM-INF inference mode using hyperparameters {hyperparameters}"
+                )
 
                 with mp.Pool(processes=num_processes) as pool:
                     results_list = pool.starmap(
                         min_entropy_inference,
                         [
-                            (args.model_name_or_path, chunk, i, args.temperature, hyperparameters)
+                            (
+                                args.model_name_or_path,
+                                chunk,
+                                i,
+                                args.temperature,
+                                hyperparameters,
+                            )
                             for i, chunk in enumerate(prompt_chunks)
                         ],
                     )
 
-                outputs = [
-                    output for sublist in results_list for output in sublist
-                ]
+                outputs = [output for sublist in results_list for output in sublist]
 
                 # --- 3. Verification and Cleanup ---
                 if len(outputs) == len(prompts):
@@ -644,7 +661,7 @@ def main(llm, tokenizer, data_name, args, cur_iter=0):
         prompt_type=args.prompt_type,
         execute=True,
     )
-    
+
     # save outputs
     if len(processed_samples) < len(all_samples) and args.save_outputs:
         save_jsonl(all_samples, out_file)
@@ -668,9 +685,7 @@ def main(llm, tokenizer, data_name, args, cur_iter=0):
     else:
         outfile = out_file.replace(".jsonl", f"_{args.prompt_type}_metrics.json")
 
-    with open(
-        outfile, "w"
-    ) as f:
+    with open(outfile, "w") as f:
         json.dump(result_json, f, indent=4)
     return result_json
 

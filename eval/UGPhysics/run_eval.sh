@@ -1,35 +1,43 @@
-export HF_HOME="/work/nvme/bcaq/zzhang32/hf_cache/"
-export HF_DATASETS_CACHE="/work/nvme/bcaq/zzhang32/hf_cache/"
-export HF_TOKEN=""
-export TRITON_LIBCUDA_PATH=/usr/local/cuda/compat/lib.real 
+#!/bin/bash
 
-export PYTORCH_CUDA_ALLOC_CONF='max_split_size_mb:1024' 
+MODE=normal
+TEMP=0.1
 
-# module load cuda/12.4
-export HF_ALLOW_CODE_EVAL="1"
-export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export OPENAI_API_KEY=token-abc123
-export OPENAI_BASE_URL=http://localhost:8000/v1
+python codes/generate_open.py --model $MODEL --subject SemiconductorPhysics --tensor_parallel_size 4 --mode temp_decrease --n_repeat 1 --temperature $TEMP --hyperparameters "$hyperparameters_temp_decrease"
 
-MODEL=meta-llama/Llama-3.1-8B-Instruct
-hyperparameters="{\"threshold\": $threshold, \"kl_weight\": 0.0, \"learning_rate\": 0.1, \"n_grad_steps\": 5, \"temp\": 0.1, \"temp_decrease\": true}"
 
-SUB_LIST=(
-    "SemiconductorPhysics"
-)
+# export HF_HOME="/work/nvme/bcaq/zzhang32/hf_cache/"
+# export HF_DATASETS_CACHE="/work/nvme/bcaq/zzhang32/hf_cache/"
+# export HF_TOKEN=""
+# export TRITON_LIBCUDA_PATH=/usr/local/cuda/compat/lib.real 
 
-for subject in "${SUB_LIST[@]}"; do
-    echo "*********************************************"
-    python codes/generate_open.py --model $MODEL --subject ${subject} --tensor_parallel_size 4 --mode temp_decrease --n_repeat 1 --temperature 0.1 --min_ent_params "$hyperparameters_temp_decrease"
-    echo "*********************************************"
-done
+# export PYTORCH_CUDA_ALLOC_CONF='max_split_size_mb:1024' 
 
-echo "Evaluating individual subject......"
-for subject in "${SUB_LIST[@]}"; do
-    echo "*********************************************"
-    python codes/eval.py --model_path ${MODEL} --subject ${subject} --mode temp_decrease --min_ent_params "$hyperparameters_temp_decrease"
-    echo "*********************************************"
-done
+# # module load cuda/12.4
+# export HF_ALLOW_CODE_EVAL="1"
+# export VLLM_WORKER_MULTIPROC_METHOD=spawn
+# export OPENAI_API_KEY=token-abc123
+# export OPENAI_BASE_URL=http://localhost:8000/v1
+
+# MODEL=meta-llama/Llama-3.1-8B-Instruct
+# hyperparameters="{\"threshold\": $threshold, \"kl_weight\": 0.0, \"learning_rate\": 0.1, \"n_grad_steps\": 5, \"temp\": 0.1, \"temp_decrease\": true}"
+
+# SUB_LIST=(
+#     "SemiconductorPhysics"
+# )
+
+# for subject in "${SUB_LIST[@]}"; do
+#     echo "*********************************************"
+#     python codes/generate_open.py --model $MODEL --subject ${subject} --tensor_parallel_size 4 --mode temp_decrease --n_repeat 1 --temperature 0.1 --min_ent_params "$hyperparameters_temp_decrease"
+#     echo "*********************************************"
+# done
+
+# echo "Evaluating individual subject......"
+# for subject in "${SUB_LIST[@]}"; do
+#     echo "*********************************************"
+#     python codes/eval.py --model_path ${MODEL} --subject ${subject} --mode temp_decrease --min_ent_params "$hyperparameters_temp_decrease"
+#     echo "*********************************************"
+# done
 
 # echo "Evaluating all subjects......"
 # python codes/eval.py --model_path ${MODEL} --subject all

@@ -14,10 +14,7 @@ from datetime import datetime
 import numpy as np
 import torch
 from transformers import AutoTokenizer
-from utils.em_inf_utils import (
-    min_entropy_inference,
-    AdaptiveTemperatureProcessor
-)
+from utils.em_inf_utils import AdaptiveTemperatureProcessor, min_entropy_inference
 from utils.grader import math_equal
 from utils.math_equivalence import is_equiv
 from utils.self_consistency_generator import (
@@ -64,6 +61,7 @@ def generate_sample_batch(question_list):
     outputs = llm.generate(question_list, sampling_params, use_tqdm=True)
     completions = [output.outputs[0].text for output in outputs]
     return completions
+
 
 def _last_boxed_only_string(string):
     idx = string.rfind("\\boxed")
@@ -130,6 +128,7 @@ def match_answer(response):
     # Grade
     return is_matched, response
 
+
 def make_conv_hf(question, tokenizer):
     system_prompt = open("system_prompt.md").read()
     system_prompt = system_prompt.replace("\n", "")
@@ -142,6 +141,7 @@ def make_conv_hf(question, tokenizer):
         msg, tokenize=False, add_generation_prompt=True
     )
     return chat
+
 
 def run(args, cur_iter=-1, vllm_model_instance=None):
     all_problems = read_jsonl_file(
@@ -158,7 +158,7 @@ def run(args, cur_iter=-1, vllm_model_instance=None):
                 for problem_data in all_problems
             ]
         )
-        
+
     elif args.inference_mode == "self_refinement":
         print("*" * 30)
         print(f"Running with self-refinement inference mode: iteration {cur_iter}")
@@ -220,8 +220,10 @@ def run(args, cur_iter=-1, vllm_model_instance=None):
                     "concatenated_prompt": current_prompt + model_output + "\n\n",
                 }
             )
-            
-        print(f"Saving concatenated prompt for next iteration into: {args.save_dir}/self_refinement_prompts.jsonl")
+
+        print(
+            f"Saving concatenated prompt for next iteration into: {args.save_dir}/self_refinement_prompts.jsonl"
+        )
         write_jsonl_file(
             os.path.join(args.save_dir, "self_refinement_prompts.jsonl"), tmp_data
         )
@@ -237,26 +239,26 @@ def run(args, cur_iter=-1, vllm_model_instance=None):
         completions_dict = generate_sample_batch_with_n_trajs(
             args, question_list, args.n_trajs
         )
-        completions = self_consistency_output_selection(
-            completions_dict, question_list
-        )
-        
+        completions = self_consistency_output_selection(completions_dict, question_list)
+
     elif args.inference_mode == "adaptive_temp":
         hyperparameters = json.loads(args.hyperparameters)
-        print(f"Running with adaptive temperature inference mode using hyperparameters {hyperparameters}")
-        
+        print(
+            f"Running with adaptive temperature inference mode using hyperparameters {hyperparameters}"
+        )
+
         conversation_txts = [
             make_conv_hf(problem_data["question"], tokenizer)
             for problem_data in all_problems
         ]
-        
+
         llm = LLM(
-                model=args.model,
-                trust_remote_code=True,
-                tensor_parallel_size=4,
-                dtype="bfloat16",
-                gpu_memory_utilization=0.7,
-            )
+            model=args.model,
+            trust_remote_code=True,
+            tensor_parallel_size=4,
+            dtype="bfloat16",
+            gpu_memory_utilization=0.7,
+        )
         logits_processor = AdaptiveTemperatureProcessor(
             tmax=hyperparameters["tmax"],
             tmin=hyperparameters["tmin"],
@@ -280,7 +282,7 @@ def run(args, cur_iter=-1, vllm_model_instance=None):
         ################################# Data Parallelism Inference setup #################################
         mp.set_start_method("spawn")  # Important for CUDA safety!
         num_processes = args.num_processes
-        
+
         torch.manual_seed(42)
         np.random.seed(42)
         random.seed(42)
@@ -298,8 +300,10 @@ def run(args, cur_iter=-1, vllm_model_instance=None):
         ]
 
         # --- 2. Create and Start Processes ---
-        hyperparameters = json.loads(args.hyperparameters)     
-        print(f"Running with EM-INF inference mode using hyperparameters {hyperparameters}")
+        hyperparameters = json.loads(args.hyperparameters)
+        print(
+            f"Running with EM-INF inference mode using hyperparameters {hyperparameters}"
+        )
 
         with mp.Pool(processes=num_processes) as pool:
             results_list = pool.starmap(
@@ -486,9 +490,7 @@ def run(args, cur_iter=-1, vllm_model_instance=None):
         file_name = "results_total.txt"
     output_file = os.path.join(args.save_dir, file_name)
     with open(output_file, "w+") as f:
-        f.write(
-            f"total: {total}, success: {correct}, rate: {correct / total}\n"
-        )
+        f.write(f"total: {total}, success: {correct}, rate: {correct / total}\n")
 
     if args.inference_mode == "ice_self_consistency":
         suffix = datetime.now().strftime("%Y%m%d_%H%M")
@@ -518,12 +520,26 @@ def run(args, cur_iter=-1, vllm_model_instance=None):
         file_name = "results.json"
     write_jsonl_file(os.path.join(args.save_dir, file_name), save_data)
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", "-d", type=str, default="")
     parser.add_argument("--save_dir", "-s", type=str, default="")
     parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-7B-Instruct")
-    parser.add_argument("--inference_mode", "-i", type=str, default="normal", choices=["normal", "self_consistency", "self_refinement", "adaptive_temp", "em_inf", "ice_self_consistency"])
+    parser.add_argument(
+        "--inference_mode",
+        "-i",
+        type=str,
+        default="normal",
+        choices=[
+            "normal",
+            "self_consistency",
+            "self_refinement",
+            "adaptive_temp",
+            "em_inf",
+            "ice_self_consistency",
+        ],
+    )
     parser.add_argument("--n_trajs", type=int, default=4)
     parser.add_argument("--temp", type=float, default=0.0)
     parser.add_argument(

@@ -10,27 +10,19 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 import torch.distributed as dist
-from min_entropy_gen import AdaptiveTemperatureProcessor, min_entropy_inference
+from em_inf_gen import (
+    AdaptiveTemperatureProcessor,
+    min_entropy_inference,
+)
 from self_consistency_utils import output_selection_with_self_consistency
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 from utils import *
-
 from vllm import LLM, SamplingParams
 from vllm.distributed.parallel_state import (
     destroy_distributed_environment,
     destroy_model_parallel,
 )
-
-ERROR_BARS = os.environ.get("ERROR_BARS")
-CUR_RUN = os.environ.get("CUR_RUN")
-SEED_POOL = [19, 25, 98, 10, 44]
-seed = 42 if ERROR_BARS is None else SEED_POOL[int(CUR_RUN) - 1]
-print(f"ERROR_BARS: {ERROR_BARS}, CUR_RUN: {CUR_RUN}, seed: {seed}")
-
-torch.manual_seed(seed)
-np.random.seed(seed)
-random.seed(seed)
 
 SUB_LIST = [
     "Electrodynamics",
@@ -50,6 +42,7 @@ SUB_LIST = [
 
 
 def generate(
+    args,
     model_path: str,
     dataset_path: str,
     output_path: str,
@@ -59,7 +52,6 @@ def generate(
     n_repeat=1,
     system="You are a helpful assistant.",
     mode="normal",
-    hyperparameters=None,
     test_part: Optional[Tuple[int, int]] = None,
 ) -> None:
     """
@@ -102,7 +94,7 @@ def generate(
             temperature=temperature,
             top_p=1,
             max_tokens=max_tokens,
-            seed=seed,
+            seed=42,
             stop=stop_tokens,
             n=n_repeat,
         )
@@ -294,9 +286,10 @@ def generate(
     for items in test_dataset_list:
         items["completion"] = ""
 
-    if mode == "temp_decrease":
+    if mode == "adaptive_temp":
+        hyperparameters = json.loads(args.hyperparameters)
         print(
-            f"Generating with temperature decrease inference mode with parameters (is_dict={isinstance(hyperparameters, dict)}): {hyperparameters}"
+            f"Generating solutions for {args.subject} using Adaptive Temperature inference mode with hyperparameters = {hyperparameters}"
         )
         llm = LLM(
             model=model_path,
@@ -333,7 +326,7 @@ def generate(
             temperature=1.0,
             top_p=1,
             max_tokens=max_tokens,
-            seed=seed,
+            seed=42,
             logits_processors=[logits_processor],
             stop=stop_tokens,
         )
@@ -365,11 +358,14 @@ def generate(
             gc.collect()
             torch.cuda.empty_cache()
 
-    elif mode == "min_entropy":
-        print("Generating with entropy minimization inference mode")
+    elif mode == "em_inf":
         ################################# Data Parallelism Inference setup #################################
         mp.set_start_method("spawn")  # Important for CUDA safety!
-        num_processes = 16
+        num_processes = args.num_processes
+
+        torch.manual_seed(42)
+        np.random.seed(42)
+        random.seed(42)
         ####################################################################################################
 
         # --- 1. Prepare and Chunkify prompts ---
@@ -381,52 +377,21 @@ def generate(
         ]
 
         # --- 2. Create and Start Processes ---
+        hyperparameters = json.loads(args.hyperparameters)
         print(
-            f"\nStarting inference on {len(prompts)} prompts across {num_processes} processes..."
+            f"Generating solutions for {args.subject} using EM-INF inference mode with hyperparameters = {hyperparameters} on {num_processes} processes."
         )
-        hyperparameters = json.loads(args.min_ent_params)
-        print(
-            f"Using hyperparameters (is dictionary={isinstance(hyperparameters, dict)}): {hyperparameters}"
-        )
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        random.seed(seed)
+
         with mp.Pool(processes=num_processes) as pool:
             results_list = pool.starmap(
                 min_entropy_inference,
                 [
-                    (args.model, chunk, i, hyperparameters)
+                    (args.model, chunk, i, args.temperature, hyperparameters)
                     for i, chunk in enumerate(prompt_chunks)
                 ],
             )
 
-        # Now, "unzip" the list of tuples.
-        if results_list:
-            # zip(*...) transposes the list of tuples.
-            all_completions_tuples, all_prompt_time_dicts_tuples = zip(*results_list)
-            all_completions = list(all_completions_tuples)
-            all_prompt_time_dicts = list(all_prompt_time_dicts_tuples)
-
-        prompt_time_dict = {}
-        # print(all_prompt_time_dicts)
-        for sub_dict in all_prompt_time_dicts:
-            for k, v in sub_dict.items():
-                if k not in prompt_time_dict:
-                    prompt_time_dict[k] = v
-                else:
-                    prompt_time_dict[k] = prompt_time_dict[k] + v
-
-        root_dir = os.path.dirname(output_path)
-
-        prompt_time_dict_path = os.path.join(
-            root_dir,
-            f"prompt_time_dict{'_temp_decrease' if hyperparameters['temp_decrease'] else ''}_threshold_{str(hyperparameters['threshold'])}.json",
-        )
-        print(f"Saving prompt time dictionary to {prompt_time_dict_path}")
-        with open(prompt_time_dict_path, "w", encoding="utf-8") as json_file:
-            json.dump(prompt_time_dict, json_file, indent=4)
-
-        completions = [output for sublist in all_completions for output in sublist]
+        completions = [output for sublist in results_list for output in sublist]
 
         # --- 3. Verification and Cleanup ---
         if len(completions) == len(prompts):
@@ -438,7 +403,9 @@ def generate(
         for i, output in enumerate(completions):
             test_dataset_list[i]["completion"] = output
     elif mode == "self_consistency":
-        print(f"Using self-consistency inference mode using {n_repeat} trajectories")
+        print(
+            f"Using self-consistency inference mode using {args.n_trajs} trajectories"
+        )
 
         # generate n_repeat for each prompt and group them by prompts
         llm = LLM(
@@ -468,12 +435,12 @@ def generate(
             temperature=temperature,
             top_p=1,
             max_tokens=max_tokens,
-            seed=seed,
+            seed=42,
             stop=stop_tokens,
         )
 
         prompts = [item["prompt"] for item in test_dataset_list]
-        upsampled_prompts = prompts * args.n_repeat
+        upsampled_prompts = prompts * args.n_trajs
         outputs = llm.generate(upsampled_prompts, sampling_params, use_tqdm=True)
         assert len(outputs) == len(upsampled_prompts)
         completions = {}
@@ -583,7 +550,6 @@ def generate(
                 raise ValueError(f"Missing completion for prompt: {item['prompt']}")
 
     else:
-        print("loading vLLM Model......")
         llm = LLM(
             model=model_path,
             tensor_parallel_size=tensor_parallel_size,
@@ -611,7 +577,7 @@ def generate(
             temperature=temperature,
             top_p=1,
             max_tokens=max_tokens,
-            seed=seed,
+            seed=42,
             stop=stop_tokens,
             n=n_repeat,
         )
@@ -626,7 +592,6 @@ def generate(
 
             # Inference
             prompts = [item["prompt"] for item in curr_data_list]
-            print(prompts[0])
             completions = llm.generate(prompts, sampling_params)
 
             # Save
@@ -664,94 +629,38 @@ if __name__ == "__main__":
         "--subject", type=str, help="The subject to evaluate.", default="all"
     )
     parser.add_argument("--output_dir", type=str, default="./results/")
-    parser.add_argument("--tensor_parallel_size", type=int, default=1)
-    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--num_processes", type=int, default=8)
+    parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--max_tokens", type=int, default=4096)
     parser.add_argument(
         "--n_repeat", type=int, default=1, help="The number of samples for each query."
     )
+    parser.add_argument("--n_trajs", type=int, default=4)
     parser.add_argument("--system", type=str, default="You are a helpful assistant.")
     parser.add_argument("--mode", type=str, default="normal")
     parser.add_argument(
-        "--min_ent_params",
+        "--hyperparameters",
         type=str,
-        default='{"threshold": 0.1, "kl_weight": 0.0, "learning_rate": 0.1, "n_grad_steps": 5, "temp": 0.1, "temp_decrease": true}',
+        default='{"threshold": 0.1, "kl_weight": 0.0, "learning_rate": 0.1, "n_grad_steps": 5, "temp": 0.1}',
         help="The hyperparameters for min entropy inference.",
     )
 
     args = parser.parse_args()
-    model_name = args.model.split("/")[-1]
-    if model_name == "checkpoint":
-        model_name = args.model.split("/")[-2]
-    if "ckpts_verl" in args.model:
-        model_name = extract_model_name(args.model)
+    tensor_parallel_size = torch.cuda.device_count()
 
-    hyperparameters = json.loads(args.min_ent_params)
-    out_dir = os.path.join(args.output_dir, model_name)
-    if args.mode == "min_entropy":
-        params_dict = json.loads(args.min_ent_params)
-        out_dir = out_dir + "_min_entropy"
-    elif args.mode == "self_consistency":
-        out_dir = out_dir + "_self_consistency"
-    elif args.mode == "self_refinement":
-        out_dir = out_dir + "_self_refinement"
-    elif args.mode == "ice_self_consistency":
-        out_dir = out_dir + "_ice_self_consistency"
-    elif args.mode == "temp_decrease":
-        hyperparameters = json.loads(args.min_ent_params)
-        out_dir = (
-            out_dir
-            + "_temp_decrease"
-            + f"_threshold_{hyperparameters['threshold']}_ratio_{hyperparameters['target_ratio']}"
-        )
-    os.makedirs(out_dir, exist_ok=True)
+    out_fn = os.path.join(args.output_dir, args.subject + "_completions.json")
 
-    if args.subject == "all":
-        for sub in SUB_LIST:
-            out_fn = os.path.join(out_dir, sub + ".json")
-            if not os.path.exists(out_fn):
-                print(f"***Start generating {model_name} on {sub}!***")
-                generate(
-                    model_path=args.model,
-                    dataset_path=os.path.join("data", sub),
-                    output_path=out_fn,
-                    tensor_parallel_size=args.tensor_parallel_size,
-                    temperature=args.temperature,
-                    max_tokens=args.max_tokens,
-                    n_repeat=args.n_repeat,
-                    system=args.system,
-                )
-            else:
-                print(f"{args.model.split('/')[-1]} on {sub} already exist!")
-    else:
-        out_fn = os.path.join(out_dir, args.subject + ".json")
-        print(f"Start generating {model_name} on {args.subject}!")
-        generate(
-            model_path=args.model,
-            dataset_path=os.path.join("data", args.subject),
-            output_path=out_fn,
-            tensor_parallel_size=args.tensor_parallel_size,
-            temperature=args.temperature,
-            max_tokens=args.max_tokens,
-            n_repeat=args.n_repeat,
-            system=args.system,
-            mode=args.mode,
-            hyperparameters=hyperparameters,
-        )
+    print(args.hyperparameters)
 
-        # if not os.path.exists(out_fn):
-        #     print(f"Start generating {model_name} on {args.subject}!")
-        #     generate(
-        #         model_path=args.model,
-        #         dataset_path=os.path.join("data", args.subject),
-        #         output_path=out_fn,
-        #         tensor_parallel_size=args.tensor_parallel_size,
-        #         temperature=args.temperature,
-        #         max_tokens=args.max_tokens,
-        #         n_repeat=args.n_repeat,
-        #         system=args.system,
-        #         mode=args.mode,
-        #         hyperparameters=hyperparameters,
-        #     )
-        # else:
-        #     print(f"{args.model.split('/')[-1]} on {args.subject}  already exist!")
+    generate(
+        args=args,
+        model_path=args.model,
+        dataset_path=os.path.join("data", args.subject),
+        output_path=out_fn,
+        tensor_parallel_size=tensor_parallel_size,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
+        n_repeat=args.n_repeat,
+        system=args.system,
+        mode=args.mode,
+    )

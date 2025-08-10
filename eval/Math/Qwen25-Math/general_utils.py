@@ -1,18 +1,18 @@
-import os
 import json
+import os
 import random
-import json
-import os
-import numpy as np
 from pathlib import Path
-from typing import Iterable, Union, Any
+from typing import Any, Iterable, Union
 
+import numpy as np
+import torch
 from examples import get_examples
 
 
 def set_seed(seed: int = 42) -> None:
     np.random.seed(seed)
     random.seed(seed)
+    torch.manual_seed(42)
     os.environ["PYTHONHASHSEED"] = str(seed)
     print(f"Random seed set as {seed}")
 
@@ -152,7 +152,7 @@ PROMPT_TEMPLATES = {
     ),
     "internlm-math-fs": ("Question:{input}\nAnswer:", "{output}", "\n"),
     "internlm-math-chat": (
-        "<|im_start|>user\n{input}<|im_end|>\n" "<|im_start|>assistant\n",
+        "<|im_start|>user\n{input}<|im_end|>\n<|im_start|>assistant\n",
         "{output}",
         "\n\n",
     ),

@@ -36,36 +36,37 @@ source ./virtual_envs/lcb/bin/activate
 pip install -r ./eval/requirements_lcb.txt
 ```
 
+For UGPhysics and SciCode, use the EM-PT environment. To run SciCode evaluation, please download [the numeric test results](https://drive.google.com/drive/folders/1W5GZW6_bdiDAiipuFMqdUhvUaHIj6-pR) and save them as `eval/SciCode/eval/data/test_data.h5`.
+
 ### Running Evaluations
 
-The `evaluation_scripts` directory contains shell scripts to run evaluations with different inference modes. Different evaluation modes require different arguments. Please follow the guide below to set up the evaluation properly.
+The `EM-INF` directory contains shell scripts to run evaluations with different inference modes. Different evaluation modes require different arguments. Please follow the guide below to set up the evaluation properly.
 
 #### 1. Normal Inference Mode
 
-`evaluation_scripts/normal_eval.sh` contains the settings and commands for running evaluation with normal inference mode. Please set the following arguments in `evaluation_scripts/normal_eval.sh` accordingly:
+`EM-INF/normal_eval.sh` contains the settings and commands for running evaluation with normal inference mode. Please set the following arguments in `EM-INF/normal_eval.sh` accordingly:
 
 - `MODEL_NAME_OR_PATH`: HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct) or the path to your local model checkpoint.
 - `TEMP`: Set the temperature.
 - `TASK`: Set the tasks you want to evaluate. Available tasks for normal inference are `math500`, `amc`, `aime`, `qwen`, `leetcode`, `livecodebench`, `ugphysics`, and `scicode`.
-  - `all`: Run all the tasks.
+  - `all`: Run all the available tasks for normal mode.
   - `math`: Run all the math benchmarks, including MATH-500, AMC, AIME, and Qwen Math (Minerva and OlympiadBench).
-  - `code`: Run LeetCode and LiveCodeBench.
-  - `amc,math500,leetcode`: Run selected tasks, separated by commas.
+  - `math,leetcode,ugphysics`: Run selected tasks, separated by commas.
 
 After the arguments are set, run the following bash command. The results will be saved in `results/sanitized_model_name/normal`:
 
 ```bash
-bash evaluation_scripts/normal_eval.sh
+bash EM-INF/normal_eval.sh
 ```
 
 #### 2. EM-INF Inference Mode
 
-`evaluation_scripts/em_inf_eval.sh` contains the settings and commands for running evaluation with EM-INF inference mode. Please set the following arguments in `evaluation_scripts/em_inf_eval.sh` accordingly:
+`EM-INF/em_inf_eval.sh` contains the settings and commands for running evaluation with EM-INF inference mode. Please set the following arguments in `EM-INF/em_inf_eval.sh` accordingly:
 
 - `MODEL_NAME_OR_PATH`: HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct) or the path to your local model checkpoint.
 - `TEMP`: Set the temperature.
 - `TASK`: Set the tasks you want to evaluate. Available tasks for EM-INF are `math500`, `amc`, `aime`, `qwen`, `leetcode`, `ugphysics`, and `scicode`.
-  - `all`: Run all the tasks.
+  - `all`: Run all the available tasks for EM-INF mode.
   - `math`: Run all the math benchmarks, including MATH-500, AMC, AIME, and Qwen Math (Minerva and OlympiadBench).
   - `math,leetcode,ugphysics`: Run selected tasks, separated by commas.
 - `HYPERPARAMETERS`: There are 4 hyperparameters required for EM-INF:
@@ -78,16 +79,16 @@ bash evaluation_scripts/normal_eval.sh
 After the arguments are set, run the following bash command. The results will be saved in `results/sanitized_model_name/em_inf`:
 
 ```bash
-bash evaluation_scripts/em_inf_eval.sh
+bash EM-INF/em_inf_eval.sh
 ```
 
 #### 3. Adaptive Temperature Inference Mode
 
-`evaluation_scripts/adaptive_temp_eval.sh` contains the settings and commands for running evaluation with Adaptive Temperature inference mode. Please set the following arguments in `evaluation_scripts/adaptive_temp_eval.sh` accordingly:
+`EM-INF/adaptive_temp_eval.sh` contains the settings and commands for running evaluation with Adaptive Temperature inference mode. Please set the following arguments in `EM-INF/adaptive_temp_eval.sh` accordingly:
 
 - `MODEL_NAME_OR_PATH`: HuggingFace model name (e.g., Qwen/Qwen2.5-7B-Instruct) or the path to your local model checkpoint.
 - `TASK`: Set the tasks you want to evaluate. Available tasks for Adaptive Temperature inference are `math500`, `amc`, `aime`, `qwen`, `leetcode`, `ugphysics`, and `scicode`.
-  - `all`: Run all the tasks.
+  - `all`: Run all the available tasks for Adaptive Temperature mode.
   - `math`: Run all the math benchmarks, including MATH-500, AMC, AIME, and Qwen Math (Minerva and OlympiadBench).
   - `math,leetcode,ugphysics`: Run selected tasks, separated by commas.
 - `HYPERPARAMETERS`: There are 6 hyperparameters required for Adaptive Temperature:
@@ -101,5 +102,5 @@ bash evaluation_scripts/em_inf_eval.sh
 After the arguments are set, run the following bash command. The results will be saved in `results/sanitized_model_name/adaptive_temp`:
 
 ```bash
-bash evaluation_scripts/adaptive_temp_eval.sh
+bash EM-INF/adaptive_temp_eval.sh
 ```

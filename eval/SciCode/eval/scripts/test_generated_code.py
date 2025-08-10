@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-
 from scicode.parse.parse import H5PY_FILE, read_from_hf_dataset
 
 PROB_NUM = 80
@@ -24,6 +23,7 @@ def test_code(
     split,
     code_dir,
     log_dir,
+    tmp_dir,
     output_dir,
     with_background=False,
     mode="normal",
@@ -39,7 +39,7 @@ def test_code(
         json_idx[prob_data["problem_id"]] = scicode_data.index(prob_data)
     start_time = time.time()
 
-    code_dir_ = Path(code_dir, model_name, _get_background_dir(with_background))
+    code_dir_ = Path(code_dir, _get_background_dir(with_background))
     if mode == "self_refinement":
         code_dir_ = Path(
             code_dir,
@@ -48,7 +48,7 @@ def test_code(
             f"iter_{current_iter}",
         )
     print(code_dir_)
-    tmp_dir = Path(f"tmp_{start_time}")
+    tmp_dir = tmp_dir / Path(f"tmp_{start_time}")
 
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -114,14 +114,11 @@ from scicode.parse.parse import process_hdf5_to_tuple
             if mode == "self_refinement":
                 logs_dir_ = Path(
                     log_dir,
-                    model_name,
                     _get_background_dir(with_background),
                     f"iter_{current_iter}",
                 )
             else:
-                logs_dir_ = Path(
-                    log_dir, model_name, _get_background_dir(with_background)
-                )
+                logs_dir_ = Path(log_dir, _get_background_dir(with_background))
             logs_dir_.mkdir(parents=True, exist_ok=True)
             logs_file = Path(logs_dir_, f"{file_path.stem}.txt")
             if logs_file.exists():
@@ -168,10 +165,14 @@ from scicode.parse.parse import process_hdf5_to_tuple
         eval_correct_dict_file_path = f"{output_dir}/{model_name}_{_get_background_dir(with_background)}_iter_{current_iter}.json"
     else:
         eval_results_file_path = (
-            f"{output_dir}/{model_name}_{_get_background_dir(with_background)}.txt"
+            f"{output_dir}/eval_results_with_background.txt"
+            if with_background
+            else f"{output_dir}/eval_results_without_background.txt"
         )
         eval_correct_dict_file_path = (
-            f"{output_dir}/{model_name}_{_get_background_dir(with_background)}.json"
+            f"{output_dir}/individual_problem_correctness_with_background.json"
+            if with_background
+            else f"{output_dir}/individual_problem_correctness_without_background.txt"
         )
 
     with open(eval_results_file_path, "w") as f:
@@ -222,6 +223,12 @@ def get_cli() -> argparse.ArgumentParser:
         help="Log directory",
     )
     parser.add_argument(
+        "--tmp-dir",
+        type=Path,
+        default=Path("logs"),
+        help="Log directory",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("eval_results"),
@@ -259,6 +266,7 @@ def main(
     split: str,
     code_dir: Path,
     log_dir: Path,
+    tmp_dir,
     output_dir: Path,
     with_background: bool,
     mode: str,
@@ -269,30 +277,17 @@ def main(
         raise FileNotFoundError(
             "Please download the numeric test results before testing generated code."
         )
-    if "ckpts_verl" in model:
-        extracted_model_name = extract_model_name(model)
-    else:
-        extracted_model_name = Path(model).parts[-1]
 
-    if mode == "min_entropy":
-        hyperparams_dict = json.loads(hyperparameters)
-        extracted_model_name = (
-            extracted_model_name
-            + "_min_entropy"
-            + f"_kl_{hyperparams_dict['kl_weight']}_lr_{hyperparams_dict['learning_rate']}_steps_{hyperparams_dict['n_grad_steps']}_threshold_{hyperparams_dict['threshold']}"
-        )
-    elif mode == "self_refinement":
-        extracted_model_name = f"{extracted_model_name}_self_refinement"
-    elif mode == "temp_decrease":
-        hyperparams_dict = json.loads(hyperparameters)
-        extracted_model_name = (
-            f"{extracted_model_name}_temp_decrease"
-            + f"_ratio_{hyperparams_dict['target_ratio']}_threshold_{hyperparams_dict['target_threshold']}"
-        )
-
-    model = extracted_model_name
     test_code(
-        model, split, code_dir, log_dir, output_dir, with_background, mode, current_iter
+        model,
+        split,
+        code_dir,
+        log_dir,
+        tmp_dir,
+        output_dir,
+        with_background,
+        mode,
+        current_iter,
     )
 
 

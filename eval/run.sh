@@ -12,6 +12,8 @@
 set -e  # Exit on any error
 
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export HF_ALLOW_CODE_EVAL="1"
+export VLLM_USE_V1=0
 
 # =============================================================================
 # Default Configuration
@@ -52,15 +54,16 @@ EXAMPLES:
     $0 --model_ckpt /path/to/model --mode adaptive_temp --temp 0.7 --task "amc, math500, leetcode"
 
 AVAILABLE TASKS:
+    all         - Run all available tasks for the selected mode
     math        - Run all math tasks (math500, amc, aime, qwen)
-    code        - Run all code tasks (leetcode, livecodebench)
-    all         - Run all available tasks
     math500     - Run math500 benchmark only
     amc         - Run AMC benchmark only
     aime        - Run AIME benchmark only
     qwen        - Run Qwen math evaluation only
     leetcode    - Run LeetCode benchmark only
     livecodebench - Run LiveCodeBench only
+    ugphysics   - Run UGPhysics only
+    scicode     - Run SciCode benchmark only
 
 MULTIPLE TASKS:
     You can specify multiple tasks in several ways:
@@ -86,7 +89,7 @@ validate_required_args() {
 }
 
 validate_task() {
-    local valid_tasks=("math" "code" "all" "math500" "amc" "aime" "qwen" "leetcode" "livecodebench")
+    local valid_tasks=("math" "all" "math500" "amc" "aime" "qwen" "leetcode" "livecodebench" "ugphysics" "scicode")
     
     # Parse comma-separated tasks
     IFS=',' read -ra task_list <<< "$TASK"
@@ -115,8 +118,7 @@ setup_directories() {
     local repo_dir="$(dirname "$(dirname "$(realpath "$0")")")"
     local model_name="${MODEL_CKPT//\//__}"
     local output_dir="$repo_dir/results/$model_name/$MODE"
-    
-    mkdir -p "$repo_dir/results"
+
     mkdir -p "$output_dir"
     
     echo "$repo_dir"
@@ -139,11 +141,14 @@ get_task_array() {
             "math")
                 final_tasks+=(math500 amc aime qwen)
                 ;;
-            "code")
-                final_tasks+=(leetcode livecodebench)
-                ;;
             "all")
-                final_tasks+=(math500 amc aime qwen leetcode livecodebench)
+                if [[ "$MODE" == "normal" ]]; then
+                    final_tasks+=(math500 amc aime qwen leetcode livecodebench ugphysics scicode)
+                elif [[ "$MODE" == "em_inf" || "$MODE" == "adaptive_temp" ]]; then
+                    final_tasks+=(math500 amc aime qwen leetcode ugphysics scicode)
+                else
+                    final_tasks+=(math500 amc aime qwen leetcode livecodebench)
+                fi
                 ;;
             *)
                 final_tasks+=("$task")
@@ -175,9 +180,30 @@ print_configuration() {
     echo "  Temperature: $TEMP"
     echo "  Task Input: $TASK"
     echo "  Tasks to Execute: ${task_array_ref[*]}"
-    echo "  Number of Trajectories: $N_TRAJS"
-    echo "  Number of Processes: $NUM_PROCESSES"
-    echo "  Hyperparameters: $HYPERPARAMETERS"
+    
+    # Mode-specific parameters
+    case "$MODE" in
+        "normal")
+            # No additional parameters for normal mode
+            ;;
+        "self_consistency")
+            echo "  Number of Trajectories: $N_TRAJS"
+            ;;
+        "adaptive_temp")
+            echo "  Hyperparameters: $HYPERPARAMETERS"
+            ;;
+        "em_inf")
+            echo "  Number of Processes: $NUM_PROCESSES"
+            echo "  Hyperparameters: $HYPERPARAMETERS"
+            ;;
+        *)
+            # For any other modes, show all parameters
+            echo "  Number of Trajectories: $N_TRAJS"
+            echo "  Number of Processes: $NUM_PROCESSES"
+            echo "  Hyperparameters: $HYPERPARAMETERS"
+            ;;
+    esac
+    
     echo "  Output Directory: $output_dir"
     echo "****************************************************************************************************************************************************************"
 }
@@ -190,7 +216,7 @@ run_leetcode() {
     local output_dir="$1"
     
     echo "Running LeetCode evaluation..."
-    # source virtual_env/prime/bin/activate
+    # source "$repo_dir/virtual_envs/prime/bin/activate"
     source "/work/nvme/bcaq/zzhang32/env/prime/bin/activate"
     
     mkdir -p "$output_dir/leetcode_chat"
@@ -207,7 +233,7 @@ run_amc() {
     local output_dir="$1"
     
     echo "Running AMC evaluation (numina)..."
-    # source virtual_env/prime/bin/activate
+    # source "$repo_dir/virtual_envs/prime/bin/activate"
     source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
     
     mkdir -p "$output_dir/amc_chat"
@@ -226,7 +252,7 @@ run_aime() {
     local output_dir="$1"
     
     echo "Running AIME evaluation (numina)..."
-    # source virtual_env/prime/bin/activate
+    # source "$repo_dir/virtual_envs/prime/bin/activate"
     source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
     
     mkdir -p "$output_dir/aime_chat"
@@ -245,7 +271,7 @@ run_math500() {
     local output_dir="$1"
     
     echo "Running Math500 evaluation..."
-    # source virtual_env/prime/bin/activate
+    # source "$repo_dir/virtual_envs/prime/bin/activate"
     source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
     
     mkdir -p "$output_dir/math_chat"
@@ -265,7 +291,7 @@ run_qwen() {
     local current_dir="$PWD"
     
     echo "Running Qwen math evaluation..."
-    # source virtual_env/qwen_math/bin/activate
+    # source "$repo_dir/virtual_envs/qwen_math/bin/activate"
     source /work/nvme/bcaq/zzhang32/env/qwen_math/bin/activate
     
     mkdir -p "$output_dir/qwen_math"
@@ -291,7 +317,125 @@ run_qwen() {
         --hyperparameters "${HYPERPARAMETERS}" \
         --num_processes ${NUM_PROCESSES}
     
-    # bash sh/eval.sh "$prompt_type" "$MODEL_CKPT" "$output_dir/qwen_math" "$MODE" "$TEMP" "$HYPERPARAMETERS" "$NUM_PROCESSES"
+    cd "$current_dir"
+}
+
+run_ugphysics() {
+    local output_dir="$1"
+    local current_dir="$PWD"
+    
+    echo "Running UGPhysics - Semiconductor Physics Subject evaluation..."
+    # source "$repo_dir/virtual_envs/em_pt/bin/activate"
+    source /work/nvme/bcaq/zzhang32/env/pu_learning/bin/activate
+    
+    mkdir -p "$output_dir/ugphysics"
+
+    cd ./UGPhysics
+    python codes/generate_open.py --model "$MODEL_CKPT" --subject SemiconductorPhysics --mode ${MODE} --output_dir "$output_dir/ugphysics" --n_repeat 1 --num_processes ${NUM_PROCESSES} --temperature $TEMP --hyperparameters "${HYPERPARAMETERS}"
+    python codes/eval.py --model_path "$MODEL_CKPT" --subject SemiconductorPhysics --mode ${MODE} --output_dir "$output_dir/ugphysics" --hyperparameters "${HYPERPARAMETERS}"
+    
+    cd "$current_dir"
+}
+
+run_scicode() {
+    local output_dir="$1"
+    local current_dir="$PWD"
+    local num_gpus
+
+    # Define a local cleanup function specifically for scicode
+    scicode_cleanup() {
+        echo "Cleaning up vLLM server..."
+        if [ ! -z "$VLLM_PID" ]; then
+            kill $VLLM_PID 2>/dev/null || true
+            wait $VLLM_PID 2>/dev/null || true
+            echo "vLLM server with PID $VLLM_PID terminated"
+            unset VLLM_PID
+        fi
+    }
+
+    wait_for_server() {
+        echo "Waiting for vLLM server to be ready..."
+        local max_attempts=15  # Wait up to 5 minutes
+        local attempt=0
+        
+        while [ $attempt -lt $max_attempts ]; do
+            if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+                echo "vLLM server is ready!"
+                return 0
+            fi
+            
+            sleep 20
+            attempt=$((attempt + 1))
+            echo "Attempt $attempt/$max_attempts - Server not ready yet..."
+        done
+        
+        echo "Server failed to start within timeout period"
+        return 1
+    }
+
+    # Set up trap to call scicode_cleanup on error or interrupt
+    trap scicode_cleanup EXIT INT TERM
+
+    echo "Running SciCode evaluation..."
+    # source "$repo_dir/virtual_envs/em_pt/bin/activate"
+    source /work/nvme/bcaq/zzhang32/env/pu_learning/bin/activate
+
+    cd ./SciCode
+
+    if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+        num_gpus=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
+    else
+        num_gpus=$(nvidia-smi --list-gpus | wc -l)
+    fi
+
+    mkdir -p "$output_dir/scicode/vllm_server_logs"
+
+    # Start vLLM server in background (scicode.utils.min_entropy.AdaptiveTemperatureProcessor)
+    echo "Starting vLLM server..."
+    echo "Server logs will be saved to $output_dir/scicode/vllm_server_logs/vllm_server.log and $output_dir/scicode/vllm_server_logs/vllm_server_error.log"
+    vllm serve $MODEL_CKPT \
+        --dtype auto \
+        --tensor-parallel-size $num_gpus \
+        --gpu-memory-utilization 0.7 \
+        --trust-remote-code \
+        --logits-processor-pattern scicode.utils.min_entropy.AdaptiveTemperatureProcessor \
+        --rope-scaling '{"factor": 4.0, "original_max_position_embeddings": 32768, "rope_type": "yarn"}' \
+        --api-key token-abc123 > "$output_dir/scicode/vllm_server_logs/vllm_server.log" 2> "$output_dir/scicode/vllm_server_logs/vllm_server_error.log" &
+
+    # Store the process ID for cleanup
+    VLLM_PID=$!
+    echo "vLLM server started with PID: $VLLM_PID"
+
+    # Wait for server to be ready
+    if ! wait_for_server; then
+        echo "Failed to start vLLM server"
+        exit 1
+    fi
+
+    python eval/scripts/gencode.py \
+        --model openai/$MODEL_CKPT \
+        --split test \
+        --mode $MODE \
+        --temperature $TEMP \
+        --prompt-dir "$output_dir/scicode/prompts" \
+        --output-dir "$output_dir/scicode/generated_code" \
+        --with-background
+
+    scicode_cleanup
+    sleep 10
+
+    python eval/scripts/test_generated_code.py \
+        --model $MODEL_CKPT \
+        --mode $MODE \
+        --code-dir "$output_dir/scicode/generated_code" \
+        --log-dir "$output_dir/scicode/logs" \
+        --tmp-dir "$output_dir/scicode" \
+        --output-dir "$output_dir/scicode" \
+        --with-background \
+        --hyperparameters "$HYPERPARAMETERS"
+
+    # Reset the trap before exiting the function
+    trap - EXIT INT TERM
     
     cd "$current_dir"
 }
@@ -301,7 +445,7 @@ run_livecodebench() {
     local current_dir="$PWD"
     
     echo "Running LiveCodeBench evaluation..."
-    # source virtual_env/lcb/bin/activate
+    # source "$repo_dir/virtual_envs/lcb/bin/activate"
     source /work/nvme/bcaq/zzhang32/env/lcb/bin/activate
     
     cd ./Coding/livecodebench/LiveCodeBench-main
@@ -435,6 +579,12 @@ main() {
                 ;;
             "livecodebench")
                 run_livecodebench "$output_dir"
+                ;;
+            "ugphysics")
+                run_ugphysics "$output_dir"
+                ;;
+            "scicode")
+                run_scicode "$output_dir"
                 ;;
             *)
                 echo "Warning: Unknown task '$task', skipping..." >&2

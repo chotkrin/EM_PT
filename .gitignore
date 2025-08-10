@@ -12,3 +12,6 @@ eval/Coding/livecodebench/LiveCodeBench-main/results/
 
 # venv
 virtual_envs/
+
+# large data file
+eval/SciCode/eval/data/test_data.h5

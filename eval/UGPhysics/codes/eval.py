@@ -15,16 +15,6 @@ from judge import Judger
 from tqdm import tqdm
 from utils import *
 
-ERROR_BARS = os.environ.get("ERROR_BARS")
-CUR_RUN = os.environ.get("CUR_RUN")
-SEED_POOL = [42, 19, 25, 98, 10, 44]
-seed = 42 if ERROR_BARS is None else SEED_POOL[int(CUR_RUN) - 1]
-print(f"ERROR_BARS: {ERROR_BARS}, CUR_RUN: {CUR_RUN}, seed: {seed}")
-
-torch.manual_seed(seed)
-np.random.seed(seed)
-random.seed(seed)
-
 ugphysics_judger = Judger(strict_extract=True, judge_model="Qwen/Qwen2.5-7B-Instruct")
 
 
@@ -317,19 +307,6 @@ def eval_file(
     print(f"final aacc: {aacc: .4f}")
     print(f"model judge ratio: {model_judge_ratio: .4f}")
 
-    if ERROR_BARS is not None:
-        error_bar_log_path = f"error_bar_eval_{args.mode}.txt"
-        save_dir = os.path.dirname(save_path)
-        print(f"saving to {os.path.join(save_dir, error_bar_log_path)}")
-        with open(os.path.join(save_dir, error_bar_log_path), "a") as f:
-            # get the english language accuracy
-            en_accuracy = combined_metrics_language[
-                combined_metrics_language.language == "EN"
-            ]["accuracy"].values[0]
-            f.write(f"seed: {seed}, {en_accuracy * 100}\n")
-        print("Exiting since error bar evaluation is done")
-        return
-
     filename = save_path.split(".json")[0] + ".txt"
     with open(filename, "w", encoding="utf-8") as file:
         file.write("Acc for each subject, language combination:\n")
@@ -343,24 +320,13 @@ def eval_file(
         file.write(f"\n\nmodel judge ratio: {model_judge_ratio: .4f}\t")
 
 
-def extract_model_name(model_path):
-    import re
-
-    match = re.search(r"ckpts_verl/(.+?)/actor/huggingface", model_path)
-    if match:
-        extracted = match.group(1)
-        # Replace slashes with hyphens
-        return extracted.replace("/", "-")
-    return model_path
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model_path",
         type=str,
         help="The path of model to evaluate.",
-        default="o1-mini-2024-09-12",
+        default="Qwen/Qwen2.5-7B-Instruct",
     )
     parser.add_argument(
         "--subject",
@@ -373,83 +339,40 @@ if __name__ == "__main__":
     parser.add_argument("--use_lm_judger", action="store_true", default=False)
     parser.add_argument("--mode", type=str, default="normal")
     parser.add_argument(
-        "--min_ent_params",
+        "--hyperparameters",
         type=str,
-        default='{"threshold": 0.1, "kl_weight": 0.0, "learning_rate": 0.1, "n_grad_steps": 5, "temp": 0.1, "temp_decrease": true}',
+        default='{"threshold": 0.1, "kl_weight": 0.0, "learning_rate": 0.1, "n_grad_steps": 5, "temp": 0.1}',
         help="The hyperparameters for min entropy inference.",
     )
     args = parser.parse_args()
 
-    model_name = args.model_path.split("/")[-1]
-    if model_name == "checkpoint":
-        model_name = args.model_path.split("/")[-2]
-    if "ckpts_verl" in args.model_path:
-        model_name = extract_model_name(args.model_path)
-
-    out_dir = os.path.join(args.output_dir, model_name)
-    if args.subject == "all":
-        all_data = []
-        for sub in SUB_LIST:
-            in_fn = os.path.join(out_dir, sub + "_eval.json")
+    # TODO: self_refinement need revisit
+    if args.mode == "self_refinement":
+        base_dir = args.output_dir + "_self_refinement"
+        for cur_iter in range(3):
+            out_dir = os.path.join(base_dir, f"iter_{cur_iter}")
+            in_fn = os.path.join(out_dir, args.subject + ".json")
+            out_fn = os.path.join(out_dir, args.subject + "_eval.json")
             if not os.path.exists(in_fn):
-                print(f"{sub} not generated!")
+                print(f"{args.subject} not generated!")
                 exit()
-            all_data += read_json(in_fn)
-            print(f"{sub} results loaded!")
-        in_fn = os.path.join(out_dir, "all_subject_eval.json")
-        with open(in_fn, "w") as f:
-            json.dump(all_data, f, indent=4)
-        print(f"All resutls save to {in_fn}")
-        out_fn = os.path.join(out_dir, "all_subject_eval.json")
-        eval_file(
-            data_path=in_fn,
-            save_path=out_fn,
-            precision=args.precision,
-            use_lm_judger=args.use_lm_judger,
-        )
+            # if os.path.exists(out_fn):
+            #     print(f"{args.subject}_eval.json already exist!")
+            else:
+                print(f"Evaluating {args.subject}")
+                eval_file(
+                    data_path=in_fn,
+                    save_path=out_fn,
+                    precision=args.precision,
+                    use_lm_judger=args.use_lm_judger,
+                )
+        exit(0)
     else:
-        if args.mode == "self_refinement":
-            base_dir = out_dir + "_self_refinement"
-            for cur_iter in range(3):
-                out_dir = os.path.join(base_dir, f"iter_{cur_iter}")
-                in_fn = os.path.join(out_dir, args.subject + ".json")
-                out_fn = os.path.join(out_dir, args.subject + "_eval.json")
-                if not os.path.exists(in_fn):
-                    print(f"{args.subject} not generated!")
-                    exit()
-                # if os.path.exists(out_fn):
-                #     print(f"{args.subject}_eval.json already exist!")
-                else:
-                    print(f"Evaluating {args.subject}")
-                    eval_file(
-                        data_path=in_fn,
-                        save_path=out_fn,
-                        precision=args.precision,
-                        use_lm_judger=args.use_lm_judger,
-                    )
-            exit(0)
-
-        if args.mode == "min_entropy":
-            out_dir = out_dir + "_min_entropy"
-        elif args.mode == "self_consistency":
-            out_dir = out_dir + "_self_consistency"
-        elif args.mode == "ice_self_consistency":
-            out_dir = out_dir + "_ice_self_consistency"
-        elif args.mode == "temp_decrease":
-            hyperparameters = json.loads(args.min_ent_params)
-            out_dir = (
-                out_dir
-                + "_temp_decrease"
-                + f"_threshold_{hyperparameters['threshold']}_ratio_{hyperparameters['target_ratio']}"
-            )
-
-        in_fn = os.path.join(out_dir, args.subject + ".json")
-        out_fn = os.path.join(out_dir, args.subject + "_eval.json")
+        in_fn = os.path.join(args.output_dir, args.subject + "_completions.json")
+        out_fn = os.path.join(args.output_dir, args.subject + "_eval.json")
         if not os.path.exists(in_fn):
             print(f"{args.subject} not generated!")
             exit()
-        # if os.path.exists(out_fn):
-        #     print(f"{args.subject}_eval.json already exist!")
         else:
             print(f"Evaluating {args.subject}")
             eval_file(

@@ -1,5 +1,4 @@
 import os
-import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -14,7 +13,6 @@ from transformers.generation import (
     GenerationConfig,
     LogitsProcessorList,
     StoppingCriteriaList,
-    TemperatureLogitsWarper,
 )
 
 from transformers.generation.utils import (

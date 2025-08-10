@@ -1,16 +1,11 @@
-# import wandb
 import os
-import random
-import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
 from transformers import (
-    AutoModelForCausalLM,
     AutoTokenizer,
 )
 from transformers.cache_utils import Cache
@@ -19,18 +14,11 @@ from transformers.generation import (
     LogitsProcessorList,
     StoppingCriteriaList,
 )
-
-# GenerateNonBeamOutput = Union[GenerateDecoderOnlyOutput, GenerateEncoderDecoderOutput]
 from transformers.generation.utils import (
     GenerateDecoderOnlyOutput,
     GenerateEncoderDecoderOutput,
     GenerateNonBeamOutput,
-    TemperatureLogitsWarper,
 )
-
-# torch.manual_seed(42)
-# np.random.seed(42)
-# random.seed(42)
 
 
 class AdaptiveTemperatureProcessor:
@@ -202,7 +190,6 @@ def ent_sample(
     n_grad_steps = getattr(generation_config, "n_grad_steps", 5)
     kl_weight = getattr(generation_config, "kl_weight", 0.001)
     threshold = getattr(generation_config, "threshold", 0.3)
-    temp_decrease = getattr(generation_config, "temp_decrease", False)
     # print(
     #     f"Entropy minimization parameters: learning_rate={learning_rate}, n_grad_steps={n_grad_steps}, kl_weight={kl_weight}"
     # )
@@ -292,61 +279,34 @@ def ent_sample(
         # (the clone itself is always small)
         # next_token_logits = outputs.logits[:, -1, :].clone().float()
 
-        if temp_decrease:
-            next_token_logits = outputs.logits[:, -1, :].to(
-                copy=True, dtype=torch.float32, device=input_ids.device
-            )
-            entropy_trend = []
-            for i in range(10, 0, -1):
-                temp = i / 10.0
-                temp_processor = LogitsProcessorList(
-                    [TemperatureLogitsWarper(temperature=temp)]
-                )
+        next_token_logits = outputs.logits[:, -1, :].clone().requires_grad_(True)
+        next_token_logits = next_token_logits.to(torch.float32)
 
-                next_token_scores = temp_processor(input_ids, next_token_logits)
-                probs = nn.functional.softmax(next_token_scores, dim=-1)
+        next_token_logits_new = next_token_logits.clone()
+        original_probs = F.softmax(next_token_logits_new, dim=-1).detach()
+
+        # Make logits trainable
+        logits_param = torch.nn.Parameter(next_token_logits)
+        optimizer = torch.optim.Adam([logits_param], lr=learning_rate)
+
+        with torch.enable_grad():
+            for grad_step in range(n_grad_steps):
+                optimizer.zero_grad()
+
+                probs = F.softmax(logits_param, dim=-1)
                 entropy = -torch.sum(probs * torch.log(probs + 1e-12))
-                entropy_trend.append(entropy.item())
-                if entropy.item() < threshold:
+                if entropy < threshold:
                     break
-            # print(f"entropy trend from 1.0 to 0.1: {entropy_trend}")
-            filtered_processor = LogitsProcessorList(
-                [
-                    proc
-                    for proc in logits_processor
-                    if not isinstance(proc, TemperatureLogitsWarper)
-                ]
-            )
-            next_token_scores = filtered_processor(input_ids, next_token_scores)
-        else:
-            next_token_logits = outputs.logits[:, -1, :].clone().requires_grad_(True)
-            next_token_logits = next_token_logits.to(torch.float32)
+                # print(
+                #     f"Step {grad_step} - Entropy: {entropy.item()} | min: {entropy.min().item()} | max: {entropy.max().item()}"
+                # )
 
-            next_token_logits_new = next_token_logits.clone()
-            original_probs = F.softmax(next_token_logits_new, dim=-1).detach()
-
-            # Make logits trainable
-            logits_param = torch.nn.Parameter(next_token_logits)
-            optimizer = torch.optim.Adam([logits_param], lr=learning_rate)
-
-            with torch.enable_grad():
-                for grad_step in range(n_grad_steps):
-                    optimizer.zero_grad()
-
-                    probs = F.softmax(logits_param, dim=-1)
-                    entropy = -torch.sum(probs * torch.log(probs + 1e-12))
-                    if entropy < threshold:
-                        break
-                    # print(
-                    #     f"Step {grad_step} - Entropy: {entropy.item()} | min: {entropy.min().item()} | max: {entropy.max().item()}"
-                    # )
-
-                    kl_div = F.kl_div(
-                        input=probs.log(), target=original_probs, reduction="batchmean"
-                    )
-                    loss = kl_weight * kl_div + entropy
-                    loss.backward()
-                    optimizer.step()
+                kl_div = F.kl_div(
+                    input=probs.log(), target=original_probs, reduction="batchmean"
+                )
+                loss = kl_weight * kl_div + entropy
+                loss.backward()
+                optimizer.step()
             # print(f"Entropy after: {entropy.item()}")
 
             # with torch.no_grad():
@@ -516,13 +476,14 @@ def min_entropy_inference(
     model_name,
     prompt_chunk,
     worker_id,
+    temperature=0.1,
     hyperparameters={
         "threshold": 0.3,
         "learning_rate": 0.1,
         "n_grad_steps": 5,
         "kl_weight": 0.001,
     },
-    max_new_tokens=3072,
+    max_new_tokens=4096,
 ):
     model, tokenizer = load_hf_model_for_min_entropy_generation(
         model_name,
@@ -538,12 +499,6 @@ def min_entropy_inference(
     generation_config.n_grad_steps = hyperparameters["n_grad_steps"]
     generation_config.kl_weight = hyperparameters["kl_weight"]
     generation_config.threshold = hyperparameters["threshold"]
-    generation_config.temp_decrease = hyperparameters["temp_decrease"]
-
-    if "temp" not in hyperparameters:
-        temperature = 0.1
-    else:
-        temperature = hyperparameters["temp"]
 
     if worker_id == 0:
         print(
@@ -551,7 +506,6 @@ def min_entropy_inference(
         )
 
     outputs = []
-    prompt_generation_time = {}
     for i, prompt in tqdm(
         enumerate(prompt_chunk),
         total=len(prompt_chunk),
@@ -565,116 +519,21 @@ def min_entropy_inference(
         ).to(model.device)
         prompt_ids_len = input_ids["input_ids"].shape[-1]
 
-        start_time = time.time()
         output_ids = model.generate(
             **input_ids,
-            tokenizer=tokenizer,
             generation_config=generation_config,
             max_new_tokens=max_new_tokens,
             do_sample=True,
             temperature=temperature,
             pad_token_id=tokenizer.eos_token_id,
-            stop_strings=[
-                "<|eot_id|>",
-                "</s>",
-                "Question:",
-                "Question",
-                "USER:",
-                "USER",
-                "ASSISTANT:",
-                "ASSISTANT",
-                "Instruction:",
-                "Instruction",
-                "Response:",
-                "Response",
-            ],
         )
         output = tokenizer.decode(
             output_ids[0][prompt_ids_len:],
             skip_special_tokens=True,
         )
         outputs.append(output)
-        end_time = time.time()
 
-        if prompt in prompt_generation_time:
-            prompt_generation_time[prompt] = (
-                prompt_generation_time[prompt] + end_time - start_time
-            )
-        else:
-            prompt_generation_time[prompt] = end_time - start_time
-
-    return outputs, prompt_generation_time
-
-
-# def min_entropy_inference(
-#     model,
-#     prompt_chunk,
-#     worker_id,
-#     hyperparameters={"learning_rate": 0.1, "n_grad_steps": 5, "kl_weight": 0.001},
-#     max_new_tokens=4096,
-# ):
-#     model, tokenizer = load_hf_model_for_min_entropy_generation(
-#         model,
-#         device_map="auto",
-#         attn_implementation="flash_attention_2",
-#         torch_dtype=torch.bfloat16,
-#     )
-#     model.eval()
-
-#     generation_config = model.generation_config
-
-#     generation_config.learning_rate = hyperparameters["learning_rate"]
-#     generation_config.n_grad_steps = hyperparameters["n_grad_steps"]
-#     generation_config.kl_weight = hyperparameters["kl_weight"]
-#     generation_config.threshold = hyperparameters["threshold"]
-
-#     if worker_id == 0:
-#         print(
-#             f"learning_rate: {generation_config.learning_rate} | n_grad_steps: {generation_config.n_grad_steps} | kl_weight: {generation_config.kl_weight} | max_new_tokens: {max_new_tokens}"
-#         )
-#     outputs = []
-#     for i, prompt in tqdm(
-#         enumerate(prompt_chunk),
-#         total=len(prompt_chunk),
-#         desc=f"Processing prompts on Worker {worker_id} (process {os.getpid()})",
-#         position=worker_id,
-#         leave=True,
-#     ):
-#         input_ids = tokenizer(
-#             prompt,
-#             return_tensors="pt",
-#         ).to(model.device)
-#         prompt_ids_len = input_ids["input_ids"].shape[-1]
-#         output_ids = model.generate(
-#             **input_ids,
-#             tokenizer=tokenizer,
-#             generation_config=generation_config,
-#             max_new_tokens=max_new_tokens,
-#             do_sample=True,
-#             temperature=0.1,
-#             pad_token_id=tokenizer.eos_token_id,
-#             stop_strings=[
-#                 "<|eot_id|>",
-#                 "</s>",
-#                 "Question:",
-#                 "Question",
-#                 "USER:",
-#                 "USER",
-#                 "ASSISTANT:",
-#                 "ASSISTANT",
-#                 "Instruction:",
-#                 "Instruction",
-#                 "Response:",
-#                 "Response",
-#             ],
-#         )
-#         output = tokenizer.decode(
-#             output_ids[0][prompt_ids_len:],
-#             skip_special_tokens=True,
-#         )
-#         outputs.append(output)
-
-#     return outputs
+    return outputs
 
 
 if __name__ == "__main__":

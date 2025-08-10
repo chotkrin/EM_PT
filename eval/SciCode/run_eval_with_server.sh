@@ -1,13 +1,7 @@
 #!/bin/bash
 
-# Set up environment variables from eval_manual.sh
-export HF_HOME="/work/nvme/bcaq/zzhang32/hf_cache/"
-export HF_DATASETS_CACHE="/work/nvme/bcaq/zzhang32/hf_cache/"
-export HF_TOKEN=""
-export TRITON_LIBCUDA_PATH=/usr/local/cuda/compat/lib.real 
-export PYTORCH_CUDA_ALLOC_CONF='max_split_size_mb:1024' 
-export HF_ALLOW_CODE_EVAL="1"
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export HF_ALLOW_CODE_EVAL="1"
 export VLLM_USE_V1=0
 
 # Function to cleanup server on script exit
@@ -17,21 +11,38 @@ cleanup() {
         kill $VLLM_PID
         wait $VLLM_PID 2>/dev/null
     fi
+    # Optionally clean up log files (comment out if you want to keep them)
+    # rm -f "$LOG_DIR/vllm_server.log" "$LOG_DIR/vllm_server_error.log"
 }
 
 # Set trap to cleanup on script exit
 trap cleanup EXIT
 
+MODEL=Qwen/Qwen2.5-7B-Instruct
+MODE=normal
+TEMP=0.1
+
+if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+    num_gpus=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
+else
+    num_gpus=$(nvidia-smi --list-gpus | wc -l)
+fi
+
+# Define log directory
+LOG_DIR="/work/nvme/bcaq/zzhang32/EM_PT/results/Qwen__Qwen2.5-7B-Instruct/normal/scicode/vllm_server_logs"
+mkdir -p "$LOG_DIR"
+
 # Start vLLM server in background
 echo "Starting vLLM server..."
-vllm serve Qwen/Qwen2.5-32B-Instruct \
+echo "Server logs will be saved to $LOG_DIR/vllm_server.log and $LOG_DIR/vllm_server_error.log"
+vllm serve $MODEL \
     --dtype auto \
-    --tensor-parallel-size 4 \
+    --tensor-parallel-size $num_gpus \
     --gpu-memory-utilization 0.7 \
     --trust-remote-code \
     --logits-processor-pattern scicode.utils.min_entropy.AdaptiveTemperatureProcessor \
     --rope-scaling '{"factor": 4.0, "original_max_position_embeddings": 32768, "rope_type": "yarn"}' \
-    --api-key token-abc123 &
+    --api-key token-abc123 > "$LOG_DIR/vllm_server.log" 2> "$LOG_DIR/vllm_server_error.log" &
 
 # Store the process ID for cleanup
 VLLM_PID=$!
@@ -41,7 +52,7 @@ echo "vLLM server started with PID: $VLLM_PID"
 # Function to check if server is ready
 wait_for_server() {
     echo "Waiting for vLLM server to be ready..."
-    local max_attempts=60  # Wait up to 5 minutes
+    local max_attempts=15  # Wait up to 5 minutes
     local attempt=0
     
     while [ $attempt -lt $max_attempts ]; do
@@ -50,7 +61,7 @@ wait_for_server() {
             return 0
         fi
         
-        sleep 5
+        sleep 20
         attempt=$((attempt + 1))
         echo "Attempt $attempt/$max_attempts - Server not ready yet..."
     done
@@ -65,25 +76,25 @@ if ! wait_for_server; then
     exit 1
 fi
 
-# Run the evaluation loops (from eval_manual.sh)
-echo "Starting evaluation..."
+python eval/scripts/gencode.py \
+    --model openai/$MODEL \
+    --split test \
+    --mode $MODE \
+    --temperature $TEMP \
+    --prompt-dir /work/nvme/bcaq/zzhang32/EM_PT/results/Qwen__Qwen2.5-7B-Instruct/normal/scicode/prompts \
+    --output-dir /work/nvme/bcaq/zzhang32/EM_PT/results/Qwen__Qwen2.5-7B-Instruct/normal/scicode/generated_code \
+    --with-background
 
-for ratio in 0.1 0.2 0.3 0.4 0.5 0.6 
-do
-    for target_threshold in 0.00001 0.001 0.1
-    do
-        MODEL=Qwen/Qwen2.5-32B-Instruct
-        echo "Running $MODEL in temp_decrease mode with ratio $ratio and target_threshold $target_threshold..."
-        hyperparameters="{\"tmax\": 1, \"tmin\": 0.01, \"max_iter\": 100, \"tol\": 0.1, \"target_ratio\": $ratio, \"target_threshold\": $target_threshold}"
-        
-        python eval/scripts/gencode.py --model openai/$MODEL \
-            --split test --mode temp_decrease --temperature 0.1 --hyperparameters "$hyperparameters"
+sleep 10
 
-        sleep 10
-
-        python eval/scripts/test_generated_code.py --model $MODEL --mode temp_decrease --hyperparameters "$hyperparameters"
-    done
-done
+python eval/scripts/test_generated_code.py \
+    --model $MODEL \
+    --mode $MODE \
+    --code-dir /work/nvme/bcaq/zzhang32/EM_PT/results/Qwen__Qwen2.5-7B-Instruct/normal/scicode/generated_code \
+    --log-dir /work/nvme/bcaq/zzhang32/EM_PT/results/Qwen__Qwen2.5-7B-Instruct/normal/scicode/logs \
+    --tmp-dir /work/nvme/bcaq/zzhang32/EM_PT/results/Qwen__Qwen2.5-7B-Instruct/normal/scicode \
+    --output-dir /work/nvme/bcaq/zzhang32/EM_PT/results/Qwen__Qwen2.5-7B-Instruct/normal/scicode \
+    --hyperparameters "$hyperparameters"
 
 echo "Evaluation completed!"
 # Server will be automatically shut down by the cleanup function

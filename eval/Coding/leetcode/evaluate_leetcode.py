@@ -14,27 +14,18 @@ from typing import List
 import numpy as np
 import pandas as pd
 import torch
-
-torch.manual_seed(42)
-np.random.seed(42)
-random.seed(42)
-
 from datasets import Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
 from utils.data import read_problems, write_jsonl
+from utils.em_inf_utils import AdaptiveTemperatureProcessor, min_entropy_inference
 from utils.evaluation_leetcode import evaluate_functional_correctness
 from vllm import LLM, SamplingParams
-
-sys.path.append("/work/nvme/bcaq/zzhang32/PRIME_inference_scaling/eval/utils")
-from generation_with_ent_minimization import min_entropy_inference, AdaptiveTemperatureProcessor
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 version = "20240121-Jul"
 STOP_WORDS = ["\nassert", "assert"]
 DATA_DIR = Path(__file__).parent / "data"
-
-import re
 
 
 def match_code(s):
@@ -175,16 +166,32 @@ def evaluate_main(
                 key, acc, hardness_results[key + "_correct"], hardness_results[key]
             )
         )
-    if args.inference_mode == "min_entropy":
-        is_temp_decrease = "_vllm_temp_decrease" if hyperparameters["temp_decrease"] else ""
+
+    if args.inference_mode == "em_inf":
+        threshold_str = str(hyperparameters["threshold"])
+        kl_weight_str = str(hyperparameters["kl_weight"])
+        grad_steps_str = str(hyperparameters["n_grad_steps"])
+        lr_str = str(hyperparameters["learning_rate"])
+        file_name = (
+            "result_em_inf"
+            + f"_threshold_{threshold_str}_klweight_{kl_weight_str}_gradsteps_{grad_steps_str}_lr_{lr_str}"
+            + ".txt"
+        )
+        score_path = os.path.join(args.save_dir, file_name)
+    elif args.inference_mode == "adaptive_temp":
         ratio_str = str(hyperparameters["target_ratio"])
         threshold_str = str(hyperparameters["threshold"])
-        score_path = os.path.join(args.save_dir, f"result{is_temp_decrease}_threshold_{threshold_str}_ratio_{ratio_str}.txt")
+        file_name = (
+            "results_adaptive_temp"
+            + f"_threshold_{threshold_str}_ratio_{ratio_str}"
+            + ".txt"
+        )
+        score_path = os.path.join(args.save_dir, file_name)
     else:
         score_path = os.path.join(args.save_dir, "result.txt")
+
     with open(score_path, "w") as f:
         f.write("Pass@1: {:.3f}\n".format(score["pass@1"]))
-        f.write("Total generated tokens: {}\n".format(total_generated_tokens))
         for key in ["Easy", "Medium", "Hard"]:
             if key.endswith("_correct"):
                 continue
@@ -205,7 +212,7 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--inference_mode", "-i", type=str, default="normal")
     parser.add_argument(
-        "--min_ent_params",
+        "--hyperparameters",
         type=str,
         default='{"threshold": 0.1, "kl_weight": 0.001, "learning_rate": 0.1, "n_grad_steps": 3}',
     )
@@ -515,12 +522,14 @@ if __name__ == "__main__":
 
         exit(0)
 
-    elif args.inference_mode == "min_entropy":
-        print("Generating with entropy minimization inference mode")
-
+    elif args.inference_mode == "em_inf":
         ################################# Data Parallelism Inference setup #################################
         mp.set_start_method("spawn")  # Important for CUDA safety!
         num_processes = 16
+
+        torch.manual_seed(42)
+        np.random.seed(42)
+        random.seed(42)
         ####################################################################################################
 
         # --- 1. Prepare and Chunkify prompts ---
@@ -532,78 +541,59 @@ if __name__ == "__main__":
         ]
 
         # --- 2. Create and Start Processes ---
+        hyperparameters = json.loads(args.hyperparameters)
         print(
-            f"\nStarting inference on {len(prompts)} prompts across {num_processes} processes..."
-        )
-        hyperparameters = json.loads(args.min_ent_params)
-        print(
-            f"Using hyperparameters (is dictionary={isinstance(hyperparameters, dict)}): {hyperparameters}"
+            f"Running with EM-INF inference mode using hyperparameters {hyperparameters}"
         )
 
-        if hyperparameters["temp_decrease"]:
-            print("Using temperature decrease with vllm")
-            llm = LLM(
-                model=args.model,
-                trust_remote_code=True,
-                tensor_parallel_size=4,
-                # dtype="bfloat16",
-                # enforce_eager=False,
-                # skip_tokenizer_init=False,
-                gpu_memory_utilization=0.7,
-                # max_model_len=10000
-            )
-            logits_processor = AdaptiveTemperatureProcessor(tmax=hyperparameters["tmax"], tmin=hyperparameters["tmin"],max_iter=hyperparameters["max_iter"], tol=hyperparameters["tol"], target_ratio=hyperparameters["target_ratio"], target_threshold=hyperparameters["threshold"])
-            sampling_params = SamplingParams(
-                max_tokens=4096,
-                temperature=1.0,
-                # top_k=50,
-                seed=42,
-                logits_processors=[logits_processor],  
-                stop=["\n###\nProblem: ", "<|eot_id|>"],
+        with mp.Pool(processes=num_processes) as pool:
+            results_list = pool.starmap(
+                min_entropy_inference,
+                [
+                    (args.model, chunk, i, args.temperature, hyperparameters, 8192)
+                    for i, chunk in enumerate(prompt_chunks)
+                ],
             )
 
-            outputs = llm.generate(prompts, sampling_params, use_tqdm=True)
-            completions = [output.outputs[0].text for output in outputs]
-            completions, outputs = code_preprocessing(completions)
+        outputs = [output for sublist in results_list for output in sublist]
+        completions, outputs = code_preprocessing(outputs)
 
-        else:
-            print("using huggingface's min entropy generation")
-            with mp.Pool(processes=num_processes) as pool:
-                results_list = pool.starmap(
-                    min_entropy_inference,
-                    [
-                        (args.model, chunk, i, hyperparameters, 8192)
-                        for i, chunk in enumerate(prompt_chunks)
-                    ],
-                )
+    elif args.inference_mode == "adaptive_temp":
+        hyperparameters = json.loads(args.hyperparameters)
+        print(
+            f"Running with adaptive temperature inference mode using hyperparameters {hyperparameters}"
+        )
 
-            # Now, "unzip" the list of tuples.
-            if results_list:
-                # zip(*...) transposes the list of tuples.
-                all_completions_tuples, all_prompt_time_dicts_tuples = zip(*results_list)
-                all_completions = list(all_completions_tuples)
-                all_prompt_time_dicts = list(all_prompt_time_dicts_tuples)
+        llm = LLM(
+            model=args.model,
+            trust_remote_code=True,
+            tensor_parallel_size=4,
+            dtype="bfloat16",
+            gpu_memory_utilization=0.7,
+        )
+        logits_processor = AdaptiveTemperatureProcessor(
+            tmax=hyperparameters["tmax"],
+            tmin=hyperparameters["tmin"],
+            max_iter=hyperparameters["max_iter"],
+            tol=hyperparameters["tol"],
+            target_ratio=hyperparameters["target_ratio"],
+            target_threshold=hyperparameters["threshold"],
+        )
+        sampling_params = SamplingParams(
+            max_tokens=4096,
+            temperature=1.0,
+            seed=42,
+            logits_processors=[logits_processor],
+            stop=["\n###\nProblem: ", "<|eot_id|>"],
+        )
 
-            prompt_time_dict = {}
-            for sub_dict in all_prompt_time_dicts:
-                for k, v in sub_dict.items():
-                    if k not in prompt_time_dict:
-                        prompt_time_dict[k] = v
-                    else:
-                        prompt_time_dict[k] = prompt_time_dict[k] + v
-            prompt_time_dict_path = os.path.join(args.save_dir, f"prompt_time_dict{'_temp_decrease' if hyperparameters['temp_decrease'] else ''}_threshold_{str(hyperparameters['threshold'])}.json")
-            print(f"Saving prompt time dictionary to {prompt_time_dict_path}")
-            with open(prompt_time_dict_path, "w", encoding="utf-8") as json_file:
-                json.dump(prompt_time_dict, json_file, indent=4)
+        prompts = problems["instruction"]
+        vllm_outputs = llm.generate(prompts, sampling_params, use_tqdm=True)
+        outputs = [output.outputs[0].text for output in vllm_outputs]
+        completions, outputs = code_preprocessing(outputs)
 
-            outputs = [output for sublist in all_completions for output in sublist]
-            completions, outputs = code_preprocessing(outputs)
-
-            # --- 3. Verification and Cleanup ---
-            if len(completions) == len(prompts):
-                print("All completions generated successfully.")
-            else:
-                print("Missing completions detected.")
+    else:
+        print(f"Invalid mode: {args.inference_mode}")
 
     for i in range(len(completions)):
         if "class Solution:" not in completions[i]:
@@ -632,6 +622,6 @@ if __name__ == "__main__":
         # Optionally check the current method
         current_method = mp.get_start_method()
         print(f"Using current start method: {current_method}")
-    evaluate_main(output_filepath, result_path, temp_dir="output/temp")
-
-
+    evaluate_main(
+        output_filepath, result_path, temp_dir=os.path.join(args.save_dir, "temp")
+    )

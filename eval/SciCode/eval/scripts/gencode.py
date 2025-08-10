@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 
 import torch
-from tqdm import tqdm
-
 from scicode.gen.models import extract_python_script, get_model_function
 from scicode.parse.parse import (
     extract_function_name,
@@ -17,6 +15,7 @@ from scicode.utils.min_entropy import (
     load_hf_model_for_min_entropy_generation,
     min_entropy_inference,
 )
+from tqdm import tqdm
 
 DEFAULT_PROMPT_TEMPLATE = Path(
     "eval", "data", "background_comment_template.txt"
@@ -64,41 +63,7 @@ class Gencode:
         mode: str = "normal",
         iteration=0,
     ) -> None:
-        if "ckpts_verl" in self.model:
-            extracted_model_name = extract_model_name(self.model)
-        else:
-            extracted_model_name = Path(self.model).parts[-1]
-
-        if mode == "min_entropy":
-            extracted_model_name = (
-                extracted_model_name
-                + "_min_entropy"
-                + f"_kl_{self.hyperparameters['kl_weight']}_lr_{self.hyperparameters['learning_rate']}_steps_{self.hyperparameters['n_grad_steps']}_threshold_{self.hyperparameters['threshold']}"
-            )
-            output_dir = Path(
-                self.prompt_dir, extracted_model_name, self._get_background_dir()
-            )
-        elif mode == "self_refinement":
-            extracted_model_name = extracted_model_name + "_self_refinement"
-            output_dir = Path(
-                self.prompt_dir,
-                extracted_model_name,
-                self._get_background_dir(),
-                f"iter_{iteration}",
-            )
-        elif mode == "temp_decrease":
-            extracted_model_name = (
-                extracted_model_name
-                + "_temp_decrease"
-                + f"_ratio_{self.hyperparameters['target_ratio']}_threshold_{self.hyperparameters['target_threshold']}"
-            )
-            output_dir = Path(
-                self.prompt_dir, extracted_model_name, self._get_background_dir()
-            )
-        else:
-            output_dir = Path(
-                self.prompt_dir, extracted_model_name, self._get_background_dir()
-            )
+        output_dir = Path(self.prompt_dir, self._get_background_dir())
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file_path = output_dir / f"{prob_data['problem_id']}.{num_steps}.txt"
         output_file_path.write_text(prompt, encoding="utf-8")
@@ -112,42 +77,7 @@ class Gencode:
         mode: str = "normal",
         iteration=0,
     ) -> None:
-        if "ckpts_verl" in self.model:
-            extracted_model_name = extract_model_name(self.model)
-        else:
-            extracted_model_name = Path(self.model).parts[-1]
-
-        if mode == "min_entropy":
-            extracted_model_name = (
-                extracted_model_name
-                + "_min_entropy"
-                + f"_kl_{self.hyperparameters['kl_weight']}_lr_{self.hyperparameters['learning_rate']}_steps_{self.hyperparameters['n_grad_steps']}_threshold_{self.hyperparameters['threshold']}"
-            )
-            output_dir = Path(
-                self.output_dir, extracted_model_name, self._get_background_dir()
-            )
-        elif mode == "self_refinement":
-            extracted_model_name = extracted_model_name + "_self_refinement"
-            output_dir = Path(
-                self.output_dir,
-                extracted_model_name,
-                self._get_background_dir(),
-                f"iter_{iteration}",
-            )
-        elif mode == "temp_decrease":
-            extracted_model_name = (
-                extracted_model_name
-                + "_temp_decrease"
-                + f"_ratio_{self.hyperparameters['target_ratio']}_threshold_{self.hyperparameters['target_threshold']}"
-            )
-            output_dir = Path(
-                self.output_dir, extracted_model_name, self._get_background_dir()
-            )
-        else:
-            output_dir = Path(
-                self.output_dir, extracted_model_name, self._get_background_dir()
-            )
-
+        output_dir = Path(self.output_dir, self._get_background_dir())
         output_dir.mkdir(parents=True, exist_ok=True)
         prob_id = prob_data["problem_id"]
         output_file_path = output_dir / f"{prob_id}.{num_steps}.py"
@@ -540,10 +470,7 @@ class Gencode:
         else:
             extracted_model_name = Path(self.model).parts[-1]
         output_file_path = (
-            self.output_dir
-            / extracted_model_name
-            / self._get_background_dir()
-            / f"{prob_id}.{num_steps}.py"
+            self.output_dir / self._get_background_dir() / f"{prob_id}.{num_steps}.py"
         )
         # print(f"current function saving path: {output_file_path}")
         if num_steps == 1:
