@@ -105,10 +105,20 @@ After the arguments are set, run the following bash command. The results will be
 bash EM-INF/adaptive_temp_eval.sh
 ```
 ## EM-RL Training
-The folder EM-RL contains the training code for our entropy minimization training method. 
+The folder `EM-RL` contains the training code for our entropy minimization training method. 
 
 ## Acknowledgement: 
 
-Our training code is based on veRL. We use vLLM for inference and deverlop evaluation scripts based on PRIME, Qwen-2.5-Math, LiveCode. Our data is sourced from RLFlow and PRIME. 
+Our training code is based on [veRL](https://github.com/volcengine/verl). We use [vLLM](https://github.com/vllm-project/vllm) for inference and deverlop evaluation scripts based on [PRIME](https://github.com/PRIME-RL/PRIME), [Qwen-2.5-Math](https://github.com/QwenLM/Qwen2.5-Math), [LiveCode](https://livecodebench.github.io/). Our data is sourced from [RLFlow](https://github.com/RLHFlow) and PRIME. 
 
+## Citation:
+You can cite our work using the following bib:
+```bash
+@article{agarwal2025unreasonable,
+  title={The unreasonable effectiveness of entropy minimization in llm reasoning},
+  author={Agarwal, Shivam and Zhang, Zimin and Yuan, Lifan and Han, Jiawei and Peng, Hao},
+  journal={arXiv preprint arXiv:2505.15134},
+  year={2025}
+}
+```
 
