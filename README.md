@@ -10,7 +10,7 @@ First, create a `virtual_envs` directory under the root directory for installing
 mkdir virtual_envs
 ```
 
-We use different virtual environments for different test sets. This is because the package versions are critical when evaluating math and code benchmarks. We build virtual environments from the official repositories of [Eurus](https://github.com/OpenBMB/Eurus), [Qwen2.5-Math](https://github.com/QwenLM/Qwen2.5-Math), and [LiveCodeBench](https://github.com/LiveCodeBench/LiveCodeBench), respectively.
+We use different virtual environments for different test sets. This is because the package versions are critical when evaluating math and code benchmarks. We build virtual environments from the official repositories of [Eurus](https://github.com/OpenBMB/Eurus), [Qwen2.5-Math](https://github.com/QwenLM/Qwen2.5-Math), [LiveCodeBench](https://github.com/LiveCodeBench/LiveCodeBench), [UGPhysics](https://github.com/YangLabHKUST/UGPhysics), and [SciCode](https://github.com/scicode-bench/SciCode) respectively.
 
 For AIME 2024, AMC, MATH-500, and LeetCode, use the following virtual environment:
 
@@ -36,7 +36,15 @@ source ./virtual_envs/lcb/bin/activate
 pip install -r ./eval/requirements_lcb.txt
 ```
 
-For UGPhysics and SciCode, use the EM-PT environment. To run SciCode evaluation, please download [the numeric test results](https://drive.google.com/drive/folders/1W5GZW6_bdiDAiipuFMqdUhvUaHIj6-pR) and save them as `eval/SciCode/eval/data/test_data.h5`.
+For UGPhysics and SciCode, use the following virtual environment:
+
+```bash
+python -m venv ./virtual_envs/em_inf
+source ./virtual_envs/em_inf/bin/activate
+pip install -r ./eval/requirements_em_inf.txt
+```
+
+To run SciCode evaluation, please download [the numeric test results](https://drive.google.com/drive/folders/1W5GZW6_bdiDAiipuFMqdUhvUaHIj6-pR) and save them as `eval/SciCode/eval/data/test_data.h5`.
 
 ### Running Evaluations
 
@@ -109,7 +117,7 @@ The folder `EM-RL` contains the training code for our entropy minimization train
 
 ## Acknowledgement: 
 
-Our training code is based on [veRL](https://github.com/volcengine/verl). We use [vLLM](https://github.com/vllm-project/vllm) for inference and deverlop evaluation scripts based on [PRIME](https://github.com/PRIME-RL/PRIME), [Qwen-2.5-Math](https://github.com/QwenLM/Qwen2.5-Math), [LiveCode](https://livecodebench.github.io/). Our data is sourced from [RLFlow](https://github.com/RLHFlow) and PRIME. 
+Our training code is based on [veRL](https://github.com/volcengine/verl). We use [vLLM](https://github.com/vllm-project/vllm) for inference and deverlop evaluation scripts based on [PRIME](https://github.com/PRIME-RL/PRIME), [Qwen-2.5-Math](https://github.com/QwenLM/Qwen2.5-Math), [LiveCode](https://livecodebench.github.io/), [UGPhysics](https://github.com/YangLabHKUST/UGPhysics), and [SciCode](https://github.com/scicode-bench/SciCode). Our data is sourced from [RLFlow](https://github.com/RLHFlow) and PRIME. 
 
 ## Citation:
 You can cite our work using the following bib:

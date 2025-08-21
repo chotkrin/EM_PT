@@ -16,8 +16,8 @@ virtual_envs/
 # large data file
 eval/SciCode/eval/data/test_data.h5
 
-
-
+# test files
+eval_model_ckpt.sh
 
 **/*.pt
 **/checkpoints

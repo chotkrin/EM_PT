@@ -216,8 +216,8 @@ run_leetcode() {
     local output_dir="$1"
     
     echo "Running LeetCode evaluation..."
-    # source "$repo_dir/virtual_envs/prime/bin/activate"
-    source "/work/nvme/bcaq/zzhang32/env/prime/bin/activate"
+    source "$repo_dir/virtual_envs/prime/bin/activate"
+    # source "/work/nvme/bcaq/zzhang32/env/prime/bin/activate"
     
     mkdir -p "$output_dir/leetcode_chat"
     python3 Coding/leetcode/evaluate_leetcode.py \
@@ -233,8 +233,8 @@ run_amc() {
     local output_dir="$1"
     
     echo "Running AMC evaluation (numina)..."
-    # source "$repo_dir/virtual_envs/prime/bin/activate"
-    source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
+    source "$repo_dir/virtual_envs/prime/bin/activate"
+    # source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
     
     mkdir -p "$output_dir/amc_chat"
     python3 -u Math/amc/evaluate_amc.py \
@@ -252,8 +252,8 @@ run_aime() {
     local output_dir="$1"
     
     echo "Running AIME evaluation (numina)..."
-    # source "$repo_dir/virtual_envs/prime/bin/activate"
-    source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
+    source "$repo_dir/virtual_envs/prime/bin/activate"
+    # source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
     
     mkdir -p "$output_dir/aime_chat"
     python3 -u Math/aime/evaluate_aime.py \
@@ -271,8 +271,8 @@ run_math500() {
     local output_dir="$1"
     
     echo "Running Math500 evaluation..."
-    # source "$repo_dir/virtual_envs/prime/bin/activate"
-    source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
+    source "$repo_dir/virtual_envs/prime/bin/activate"
+    # source /work/nvme/bcaq/zzhang32/env/prime/bin/activate
     
     mkdir -p "$output_dir/math_chat"
     python3 -u Math/math/evaluate_math.py \
@@ -291,8 +291,8 @@ run_qwen() {
     local current_dir="$PWD"
     
     echo "Running Qwen math evaluation..."
-    # source "$repo_dir/virtual_envs/qwen_math/bin/activate"
-    source /work/nvme/bcaq/zzhang32/env/qwen_math/bin/activate
+    source "$repo_dir/virtual_envs/qwen_math/bin/activate"
+    # source /work/nvme/bcaq/zzhang32/env/qwen_math/bin/activate
     
     mkdir -p "$output_dir/qwen_math"
 
@@ -325,8 +325,8 @@ run_ugphysics() {
     local current_dir="$PWD"
     
     echo "Running UGPhysics - Semiconductor Physics Subject evaluation..."
-    # source "$repo_dir/virtual_envs/em_pt/bin/activate"
-    source /work/nvme/bcaq/zzhang32/env/pu_learning/bin/activate
+    source "$repo_dir/virtual_envs/em_inf/bin/activate"
+    # source /work/nvme/bcaq/zzhang32/env/pu_learning/bin/activate
     
     mkdir -p "$output_dir/ugphysics"
 
@@ -377,8 +377,8 @@ run_scicode() {
     trap scicode_cleanup EXIT INT TERM
 
     echo "Running SciCode evaluation..."
-    # source "$repo_dir/virtual_envs/em_pt/bin/activate"
-    source /work/nvme/bcaq/zzhang32/env/pu_learning/bin/activate
+    source "$repo_dir/virtual_envs/em_inf/bin/activate"
+    # source /work/nvme/bcaq/zzhang32/env/pu_learning/bin/activate
 
     cd ./SciCode
 
@@ -445,8 +445,8 @@ run_livecodebench() {
     local current_dir="$PWD"
     
     echo "Running LiveCodeBench evaluation..."
-    # source "$repo_dir/virtual_envs/lcb/bin/activate"
-    source /work/nvme/bcaq/zzhang32/env/lcb/bin/activate
+    source "$repo_dir/virtual_envs/lcb/bin/activate"
+    # source /work/nvme/bcaq/zzhang32/env/lcb/bin/activate
     
     cd ./Coding/livecodebench/LiveCodeBench-main
     mkdir -p "$output_dir/livecodebench"
